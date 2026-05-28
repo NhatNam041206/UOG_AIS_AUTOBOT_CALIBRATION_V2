@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from config.settings import _get_bool, _get_float, _get_int, _get_str
+from models.robot_state import PIDConstants
 
 
 class ConfigManager:
@@ -170,3 +171,125 @@ class VisionProcessor:
         if best_negative is None or best_positive is None:
             return None
         return best_negative, best_positive
+
+
+class GeometryCalculator:
+    """Stateless geometry helpers for line intersection and mapping."""
+
+    @staticmethod
+    def calculate_vanishing_point(
+        line1: tuple[int, int, int, int],
+        line2: tuple[int, int, int, int],
+    ) -> tuple[int, int] | None:
+        """Return the intersection point of two lines, or None if parallel."""
+        x1, y1, x2, y2 = line1
+        x3, y3, x4, y4 = line2
+
+        denominator = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+        if denominator == 0:
+            return None
+
+        det1 = x1 * y2 - y1 * x2
+        det2 = x3 * y4 - y3 * x4
+
+        px = (det1 * (x3 - x4) - (x1 - x2) * det2) / denominator
+        py = (det1 * (y3 - y4) - (y1 - y2) * det2) / denominator
+        return int(round(px)), int(round(py))
+
+    @staticmethod
+    def calculate_bottom_intercepts(
+        line1: tuple[int, int, int, int],
+        line2: tuple[int, int, int, int],
+        frame_height: int,
+    ) -> tuple[int, int]:
+        """Return x-intercepts where each line crosses y=frame_height."""
+        y_target = float(frame_height)
+
+        def x_at_y(line: tuple[int, int, int, int]) -> int:
+            x1, y1, x2, y2 = line
+            if y2 == y1:
+                return int(x1)
+            if x2 == x1:
+                return int(x1)
+            t = (y_target - y1) / (y2 - y1)
+            x = x1 + t * (x2 - x1)
+            return int(round(x))
+
+        return x_at_y(line1), x_at_y(line2)
+
+    @staticmethod
+    def map_vp_to_angle(vp_x: int, frame_width: int) -> float:
+        """Map vanishing-point x-coordinate to linear proxy heading angle."""
+        if frame_width <= 0:
+            return 90.0
+        return (180.0 / float(frame_width)) * float(vp_x)
+
+
+class SteeringController:
+    """State-machine governor implementing vision-lost, danger, and tracking stages."""
+
+    def __init__(
+        self,
+        pid_constants: PIDConstants,
+        danger_margin: int,
+        nudge_deg: float,
+        inner_thresh: float,
+        outer_thresh: float,
+    ) -> None:
+        self._pid = pid_constants
+        self._danger_margin = max(0, int(danger_margin))
+        self._nudge_deg = float(nudge_deg)
+        self._inner_thresh = abs(float(inner_thresh))
+        self._outer_thresh = max(abs(float(outer_thresh)), self._inner_thresh)
+        self._tracking_active = False
+        self._last_error = 0.0
+
+    def compute_steering(
+        self,
+        vp_angle: float | None,
+        left_intercept: int | None,
+        right_intercept: int | None,
+        frame_width: int,
+    ) -> tuple[float, str]:
+        """Return steering angle and active state according to 3-stage logic."""
+        # Stage 1: Vision Lost (Gapping)
+        if vp_angle is None or left_intercept is None or right_intercept is None:
+            self._tracking_active = False
+            self._last_error = 0.0
+            return 90.0, "GAPPING"
+
+        # Stage 3: Danger Zone override (bypass PD)
+        left_margin = self._danger_margin
+        right_margin = max(0, int(frame_width) - self._danger_margin)
+        if left_intercept > left_margin:
+            self._tracking_active = False
+            self._last_error = 0.0
+            return 90.0 + self._nudge_deg, "DANGER_LEFT"
+        if right_intercept < right_margin:
+            self._tracking_active = False
+            self._last_error = 0.0
+            return 90.0 - self._nudge_deg, "DANGER_RIGHT"
+
+        # Stage 2: Tracking with hysteresis
+        error = float(vp_angle) - 90.0
+        abs_error = abs(error)
+        if abs_error <= self._inner_thresh:
+            self._tracking_active = False
+            self._last_error = 0.0
+            return 90.0, "TRACKING_COAST"
+
+        if abs_error > self._outer_thresh:
+            self._tracking_active = True
+
+        if not self._tracking_active:
+            return 90.0, "TRACKING_COAST"
+
+        pd_correction = self._apply_pd(error)
+        steering_angle = max(0.0, min(180.0, 90.0 + pd_correction))
+        return steering_angle, "TRACKING_PD"
+
+    def _apply_pd(self, error: float) -> float:
+        """Apply proportional-derivative smoothing and return steering correction."""
+        derivative = error - self._last_error
+        self._last_error = error
+        return (self._pid.kp * error) + (self._pid.kd * derivative)
