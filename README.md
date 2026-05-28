@@ -120,3 +120,14 @@ Expected result: smooth transitions between **GAPPING**, **DANGER_LEFT/RIGHT**, 
 - HTTPS stream: enable `MAIN_HTTPS_STREAM_ENABLED` and configure `MAIN_HTTPS_*`
 
 For first deployment, keep streaming and video writing disabled until core tracking is stable.
+
+---
+
+## Utility API Documentation
+
+The codebase now includes implementation docs for the reusable utility API surface:
+
+- `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/docs/unified_calibration_components.md`
+- `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/docs/runtime_video_runtime_helpers.md`
+- `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/docs/runtime_https_stream.md`
+- `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/docs/vision_detector.md`

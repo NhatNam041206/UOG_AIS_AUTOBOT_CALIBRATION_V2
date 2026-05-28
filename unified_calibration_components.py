@@ -13,6 +13,7 @@ import numpy as np
 
 from config.settings import _get_bool, _get_float, _get_int, _get_str
 from models.robot_state import PIDConstants, RobotState
+from vision.detector import LineDetector
 
 
 class ConfigManager:
@@ -312,13 +313,41 @@ class TelemetryLogger:
         self._stream_enabled = bool(self._stream_configs.get("MAIN_HTTPS_STREAM_ENABLED", False))
         self._csv_fieldnames = [
             "frame_num",
+            "mono_timestamp",
+            "utc_timestamp",
+            "loop_ms",
+            "loop_overrun_ms",
             "fsm_state",
+            "calibration_active",
+            "theta",
+            "theta_source",
+            "theta_for_overlay",
+            "theta_horizontal",
+            "reference_group_index",
+            "selected_group_bbox",
+            "lines_count",
+            "groups_count",
+            "horizontal_ok",
+            "sanity_ok",
+            "stale_output",
+            "servo_angle",
+            "servo_center_angle",
+            "servo_offset",
+            "pid_error",
+            "pid_p_term",
+            "pid_i_term",
+            "pid_d_term",
+            "pid_integral",
+            "pid_last_error",
+            "hardware_send_latency_ms",
+            "stream_enabled",
+            "stream_host",
+            "stream_port",
             "vp_x",
             "vp_y",
             "vp_angle",
             "left_intercept",
             "right_intercept",
-            "servo_angle",
         ]
 
         self._draw_overlay_fn: Any = None
@@ -330,6 +359,7 @@ class TelemetryLogger:
         self._video_width = _get_int("MAIN_FRAME_WIDTH", 640)
         self._video_height = _get_int("MAIN_FRAME_HEIGHT", 480)
         self._frame_store: Any = None
+        self._stream_server: Any = None
         self._load_legacy_visual_and_logging_bridges()
         self._load_stream_bridge()
 
@@ -363,7 +393,7 @@ class TelemetryLogger:
             )
 
     def _load_stream_bridge(self) -> None:
-        """Load legacy SharedFrameStore when stream transport is enabled."""
+        """Load and start legacy HTTPS stream transport when enabled."""
         if not self._stream_enabled:
             return
         try:
@@ -371,8 +401,38 @@ class TelemetryLogger:
         except ModuleNotFoundError:
             return
         shared_frame_store_cls = getattr(https_stream, "SharedFrameStore", None)
+        server_cls = getattr(https_stream, "HttpsMjpegServer", None)
+        ensure_cert_fn = getattr(https_stream, "ensure_self_signed_cert", None)
         if callable(shared_frame_store_cls):
             self._frame_store = shared_frame_store_cls()
+        if (
+            self._frame_store is None
+            or not callable(server_cls)
+            or not callable(ensure_cert_fn)
+        ):
+            return
+        try:
+            ensure_cert_fn(
+                str(self._stream_configs.get("MAIN_HTTPS_CERT_FILE", "certs/main_stream_cert.pem")),
+                str(self._stream_configs.get("MAIN_HTTPS_KEY_FILE", "certs/main_stream_key.pem")),
+                str(self._stream_configs.get("MAIN_HTTPS_STREAM_HOST", "127.0.0.1")),
+                int(self._stream_configs.get("MAIN_HTTPS_SELF_SIGNED_DAYS", 365)),
+            )
+            self._stream_server = server_cls(
+                host=str(self._stream_configs.get("MAIN_HTTPS_STREAM_HOST", "127.0.0.1")),
+                port=int(self._stream_configs.get("MAIN_HTTPS_STREAM_PORT", 8443)),
+                stream_path=str(self._stream_configs.get("MAIN_HTTPS_STREAM_PATH", "/stream.mjpg")),
+                snapshot_path=str(self._stream_configs.get("MAIN_HTTPS_SNAPSHOT_PATH", "/snapshot.jpg")),
+                status_path=str(self._stream_configs.get("MAIN_HTTPS_STATUS_PATH", "/status")),
+                token=str(self._stream_configs.get("MAIN_HTTPS_TOKEN", "")),
+                cert_file=str(self._stream_configs.get("MAIN_HTTPS_CERT_FILE", "certs/main_stream_cert.pem")),
+                key_file=str(self._stream_configs.get("MAIN_HTTPS_KEY_FILE", "certs/main_stream_key.pem")),
+                frame_store=self._frame_store,
+            )
+            self._stream_server.start()
+        except Exception as exc:  # noqa: BLE001
+            self._logger.warning("HTTPS stream unavailable: %s", exc)
+            self._stream_server = None
 
     def log_state(self, frame_num: int, telemetry_data: dict[str, Any]) -> None:
         """Persist one telemetry row in CSV format when CSV logger exists."""
@@ -380,6 +440,9 @@ class TelemetryLogger:
             return
         row = {key: telemetry_data.get(key, "") for key in self._csv_fieldnames}
         row["frame_num"] = frame_num
+        bbox = row.get("selected_group_bbox")
+        if isinstance(bbox, tuple):
+            row["selected_group_bbox"] = ",".join(str(v) for v in bbox)
         self._csv_writer.writerow(row)
         if self._csv_file is not None:
             self._csv_file.flush()
@@ -471,6 +534,10 @@ class TelemetryLogger:
             release = getattr(self._video_writer, "release", None)
             if callable(release):
                 release()
+        if self._stream_server is not None:
+            stop = getattr(self._stream_server, "stop", None)
+            if callable(stop):
+                stop()
 
     def sleep_remainder(self, loop_start: float, loop_period: float) -> None:
         """Call legacy sleep helper when present, fallback to local sleep otherwise."""
@@ -494,6 +561,7 @@ class UnifiedCalibrator:
 
         self._robot_state = RobotState()
         self._vision = VisionProcessor(roi_height_pct=_get_float("ROI_HEIGHT_PCT", 0.6))
+        self._detector = LineDetector(self._robot_state)
         self._geometry = GeometryCalculator()
         inner_thresh, outer_thresh = self._config.get_vp_thresholds()
         danger_margin, danger_nudge = self._config.get_danger_margins()
@@ -507,9 +575,13 @@ class UnifiedCalibrator:
         self._telemetry = TelemetryLogger(self._config)
         self._target_hz = float(self._system_configs.get("MAIN_TARGET_HZ", 30.0))
         self._camera_retry_limit = _get_int("MAIN_CAMERA_RETRY_LIMIT", 3)
+        self._stream_configs = self._config.get_stream_configs()
+        self._stream_enabled = bool(self._stream_configs.get("MAIN_HTTPS_STREAM_ENABLED", False))
+        self._last_rendered_frame: np.ndarray | None = None
 
     def update(self, frame: np.ndarray, frame_num: int) -> float:
         """Run one full frame pipeline and return the final steering angle."""
+        loop_start = time.perf_counter()
         steering_angle = 90.0
         frame_h, frame_w = frame.shape[:2]
         vp: tuple[int, int] | None = None
@@ -517,6 +589,7 @@ class UnifiedCalibrator:
         left_intercept: int | None = None
         right_intercept: int | None = None
 
+        theta_from_detector, detector_debug = self._detector.get_reference_angle_debug(frame)
         lines = self._vision.process_frame(frame)
         selected = self._vision._apply_geometric_filter(lines)
         if selected is not None:
@@ -530,6 +603,8 @@ class UnifiedCalibrator:
             vp = self._geometry.calculate_vanishing_point(line1, line2)
             if vp is not None:
                 vp_angle = self._geometry.map_vp_to_angle(vp[0], frame_w)
+        if vp_angle is None:
+            vp_angle = theta_from_detector
 
         steering_angle, fsm_state = self._steering.compute_steering(
             vp_angle=vp_angle,
@@ -538,29 +613,62 @@ class UnifiedCalibrator:
             frame_width=frame_w,
         )
 
+        loop_ms = (time.perf_counter() - loop_start) * 1000.0
+        target_period_ms = 1000.0 / self._target_hz if self._target_hz > 0 else 0.0
+        overrun_ms = max(0.0, loop_ms - target_period_ms) if target_period_ms > 0 else 0.0
+        pid_error = 0.0 if vp_angle is None else float(vp_angle) - 90.0
+        pid_p = self._robot_state.pid.kp * pid_error
+        pid_d = self._robot_state.pid.kd * (pid_error - self._robot_state.pid_last_error)
+        pid_i = self._robot_state.pid.ki * self._robot_state.pid_integral
         telemetry_data: dict[str, Any] = {
             "frame_num": frame_num,
+            "mono_timestamp": f"{time.perf_counter():.6f}",
+            "utc_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "loop_ms": f"{loop_ms:.3f}",
+            "loop_overrun_ms": f"{overrun_ms:.3f}",
             "vp_x": None if vp is None else vp[0],
             "vp_y": None if vp is None else vp[1],
             "vp_angle": vp_angle,
+            "theta": "" if vp_angle is None else f"{vp_angle:.6f}",
+            "theta_source": "none" if vp_angle is None else "live",
+            "theta_for_overlay": "" if vp_angle is None else f"{vp_angle:.6f}",
+            "theta_horizontal": detector_debug.get("theta_horizontal", ""),
+            "reference_group_index": detector_debug.get("reference_group_index", ""),
+            "selected_group_bbox": detector_debug.get("selected_group_bbox", ""),
+            "lines_count": detector_debug.get("lines_count", len(lines)),
+            "groups_count": detector_debug.get("groups_count", 0),
+            "horizontal_ok": detector_debug.get("horizontal_ok", ""),
+            "sanity_ok": detector_debug.get("sanity_ok", ""),
+            "stale_output": detector_debug.get("stale_output", ""),
             "left_intercept": left_intercept,
             "right_intercept": right_intercept,
             "fsm_state": fsm_state,
             "servo_angle": steering_angle,
-            "servo_center_angle": 90.0,
+            "servo_center_angle": self._robot_state.servo_center_angle,
+            "servo_offset": steering_angle - self._robot_state.servo_center_angle,
+            "pid_error": f"{pid_error:.6f}",
+            "pid_p_term": f"{pid_p:.6f}",
+            "pid_i_term": f"{pid_i:.6f}",
+            "pid_d_term": f"{pid_d:.6f}",
+            "pid_integral": f"{self._robot_state.pid_integral:.6f}",
+            "pid_last_error": f"{self._robot_state.pid_last_error:.6f}",
+            "hardware_send_latency_ms": "0.000",
+            "stream_enabled": int(self._stream_enabled),
+            "stream_host": self._stream_configs.get("MAIN_HTTPS_STREAM_HOST", ""),
+            "stream_port": self._stream_configs.get("MAIN_HTTPS_STREAM_PORT", ""),
+            "calibration_active": int(bool(self._robot_state.calibration_active)),
         }
         debug_data: dict[str, Any] = {
             "show_detector_debug": bool(_get_bool("MAIN_SHOW_DETECTOR_DEBUG", False)),
-            "detector_debug": {
-                "lines_count": len(lines),
-                "selected_group_bbox": selected,
-            },
+            "detector_debug": detector_debug,
         }
 
         rendered = self._telemetry.update_visuals(frame, telemetry_data, debug_data)
+        self._last_rendered_frame = rendered
         self._telemetry.log_state(frame_num, telemetry_data)
         self._telemetry.write_video(rendered)
         self._telemetry.publish_stream(rendered, telemetry_data)
+        self._robot_state.pid_last_error = pid_error
         return float(steering_angle)
 
     def _manage_loop_timing(self, loop_start_time: float) -> None:
@@ -596,9 +704,16 @@ class UnifiedCalibrator:
                     frame = cv2.flip(frame, 1)
 
                 self.update(frame, frame_num)
+                if bool(self._debug_configs.get("MAIN_SHOW_PREVIEW", False)):
+                    preview = self._last_rendered_frame if self._last_rendered_frame is not None else frame
+                    cv2.imshow("Unified Calibration Preview", preview)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
                 frame_num += 1
                 self._manage_loop_timing(loop_start)
         finally:
             if capture is not None:
                 capture.release()
+            if bool(self._debug_configs.get("MAIN_SHOW_PREVIEW", False)):
+                cv2.destroyAllWindows()
             self._telemetry.close()
