@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import logging
+import time
+from importlib import import_module
 from math import hypot
+from typing import Any, TextIO
 
 import cv2
 import numpy as np
 
 from config.settings import _get_bool, _get_float, _get_int, _get_str
-from models.robot_state import PIDConstants
+from models.robot_state import PIDConstants, RobotState
 
 
 class ConfigManager:
@@ -293,3 +297,308 @@ class SteeringController:
         derivative = error - self._last_error
         self._last_error = error
         return (self._pid.kp * error) + (self._pid.kd * derivative)
+
+
+class TelemetryLogger:
+    """Bridge telemetry, visuals, CSV logging, and streaming to legacy utilities."""
+
+    def __init__(self, config: ConfigManager) -> None:
+        self._logger = logging.getLogger(__name__)
+        self._danger_margin_px, _ = config.get_danger_margins()
+        self._inner_thresh, self._outer_thresh = config.get_vp_thresholds()
+        self._debug_configs = config.get_debug_configs()
+        self._video_configs = config.get_video_configs()
+        self._stream_configs = config.get_stream_configs()
+        self._stream_enabled = bool(self._stream_configs.get("MAIN_HTTPS_STREAM_ENABLED", False))
+        self._csv_fieldnames = [
+            "frame_num",
+            "fsm_state",
+            "vp_x",
+            "vp_y",
+            "vp_angle",
+            "left_intercept",
+            "right_intercept",
+            "servo_angle",
+        ]
+
+        self._draw_overlay_fn: Any = None
+        self._build_detector_debug_panel_fn: Any = None
+        self._sleep_remainder_fn: Any = None
+        self._csv_writer: Any = None
+        self._csv_file: TextIO | None = None
+        self._video_writer: Any = None
+        self._video_width = _get_int("MAIN_FRAME_WIDTH", 640)
+        self._video_height = _get_int("MAIN_FRAME_HEIGHT", 480)
+        self._frame_store: Any = None
+        self._load_legacy_visual_and_logging_bridges()
+        self._load_stream_bridge()
+
+    def _load_legacy_visual_and_logging_bridges(self) -> None:
+        """Load legacy runtime.video_runtime_helpers APIs if available."""
+        try:
+            helpers = import_module("runtime.video_runtime_helpers")
+        except ModuleNotFoundError:
+            return
+
+        self._draw_overlay_fn = getattr(helpers, "draw_overlay", None)
+        self._build_detector_debug_panel_fn = getattr(helpers, "build_detector_debug_panel", None)
+        self._sleep_remainder_fn = getattr(helpers, "sleep_remainder", None)
+        init_csv_logger = getattr(helpers, "init_csv_logger", None)
+        init_video_writer = getattr(helpers, "init_video_writer", None)
+
+        if callable(init_csv_logger):
+            csv_path = _get_str("MAIN_CSV_LOG_FILE", "run_log.csv")
+            self._csv_writer, self._csv_file = init_csv_logger(csv_path, self._csv_fieldnames)
+
+        if callable(init_video_writer) and bool(
+            self._video_configs.get("MAIN_WRITE_DEBUG_VIDEO", False)
+        ):
+            path = str(self._video_configs.get("MAIN_DEBUG_VIDEO_OUTPUT", "main_debug.mp4"))
+            fps = float(self._video_configs.get("MAIN_VIDEO_OUTPUT_FPS", 20.0))
+            self._video_writer = init_video_writer(
+                path,
+                fps,
+                self._video_width,
+                self._video_height,
+            )
+
+    def _load_stream_bridge(self) -> None:
+        """Load legacy SharedFrameStore when stream transport is enabled."""
+        if not self._stream_enabled:
+            return
+        try:
+            https_stream = import_module("runtime.https_stream")
+        except ModuleNotFoundError:
+            return
+        shared_frame_store_cls = getattr(https_stream, "SharedFrameStore", None)
+        if callable(shared_frame_store_cls):
+            self._frame_store = shared_frame_store_cls()
+
+    def log_state(self, frame_num: int, telemetry_data: dict[str, Any]) -> None:
+        """Persist one telemetry row in CSV format when CSV logger exists."""
+        if self._csv_writer is None:
+            return
+        row = {key: telemetry_data.get(key, "") for key in self._csv_fieldnames}
+        row["frame_num"] = frame_num
+        self._csv_writer.writerow(row)
+        if self._csv_file is not None:
+            self._csv_file.flush()
+
+    def update_visuals(
+        self,
+        frame: np.ndarray,
+        telemetry_data: dict[str, Any],
+        debug_data: dict[str, Any],
+    ) -> np.ndarray:
+        """Draw new geometry then defer to legacy draw_overlay for final rendering."""
+        output = frame.copy()
+        frame_h, frame_w = output.shape[:2]
+
+        vp_x = telemetry_data.get("vp_x")
+        vp_y = telemetry_data.get("vp_y")
+        if vp_x is not None and vp_y is not None:
+            cv2.circle(output, (int(vp_x), int(vp_y)), 6, (0, 255, 255), -1)
+
+        left_intercept = telemetry_data.get("left_intercept")
+        right_intercept = telemetry_data.get("right_intercept")
+        bottom_y = max(0, frame_h - 1)
+        if left_intercept is not None:
+            cv2.circle(output, (int(left_intercept), bottom_y), 6, (255, 255, 0), -1)
+        if right_intercept is not None:
+            cv2.circle(output, (int(right_intercept), bottom_y), 6, (255, 255, 0), -1)
+
+        margin = max(0, min(self._danger_margin_px, frame_w))
+        cv2.line(output, (margin, 0), (margin, frame_h - 1), (0, 0, 255), 2)
+        cv2.line(
+            output,
+            (max(0, frame_w - margin), 0),
+            (max(0, frame_w - margin), frame_h - 1),
+            (0, 0, 255),
+            2,
+        )
+
+        if callable(self._draw_overlay_fn):
+            output = self._draw_overlay_fn(
+                output,
+                int(telemetry_data.get("frame_num", 0)),
+                telemetry_data.get("vp_angle"),
+                telemetry_data.get("vp_angle"),
+                float(telemetry_data.get("servo_angle", 90.0)),
+                float(telemetry_data.get("servo_center_angle", 90.0)),
+                str(telemetry_data.get("fsm_state", "GAPPING")),
+                bool(self._debug_configs.get("MAIN_SHOW_GUIDANCE_OVERLAY", True)),
+                self._outer_thresh,
+                self._inner_thresh,
+            )
+
+        detector_debug = debug_data.get("detector_debug")
+        show_panel = bool(debug_data.get("show_detector_debug", False))
+        if (
+            show_panel
+            and isinstance(detector_debug, dict)
+            and callable(self._build_detector_debug_panel_fn)
+        ):
+            panel = self._build_detector_debug_panel_fn(frame_w, 240, detector_debug)
+            if panel is not None:
+                if panel.shape[1] != frame_w:
+                    panel = cv2.resize(panel, (frame_w, panel.shape[0]))
+                output = np.vstack((output, panel))
+
+        return output
+
+    def publish_stream(self, frame: np.ndarray, telemetry_data: dict[str, Any]) -> None:
+        """Push frame to shared stream store only when HTTPS streaming is enabled."""
+        if not self._stream_enabled or self._frame_store is None:
+            return
+        set_frame = getattr(self._frame_store, "set_frame", None)
+        if callable(set_frame):
+            set_frame(frame, telemetry_data)
+
+    def write_video(self, frame: np.ndarray) -> None:
+        """Write debug frame when video writer is active."""
+        if self._video_writer is None:
+            return
+        frame_to_write = frame
+        if frame.shape[1] != self._video_width or frame.shape[0] != self._video_height:
+            frame_to_write = cv2.resize(frame, (self._video_width, self._video_height))
+        self._video_writer.write(frame_to_write)
+
+    def close(self) -> None:
+        """Release legacy resources if initialized."""
+        if self._csv_file is not None:
+            self._csv_file.close()
+        if self._video_writer is not None:
+            release = getattr(self._video_writer, "release", None)
+            if callable(release):
+                release()
+
+    def sleep_remainder(self, loop_start: float, loop_period: float) -> None:
+        """Call legacy sleep helper when present, fallback to local sleep otherwise."""
+        if callable(self._sleep_remainder_fn):
+            self._sleep_remainder_fn(loop_start, loop_period, self._logger)
+            return
+        elapsed = time.perf_counter() - loop_start
+        remaining = loop_period - elapsed
+        if remaining > 0:
+            time.sleep(remaining)
+
+
+class UnifiedCalibrator:
+    """Facade orchestrating vision, geometry, steering, telemetry, and loop timing."""
+
+    def __init__(self, config: ConfigManager | None = None) -> None:
+        self._logger = logging.getLogger(__name__)
+        self._config = config or ConfigManager()
+        self._system_configs = self._config.get_system_configs()
+        self._debug_configs = self._config.get_debug_configs()
+
+        self._robot_state = RobotState()
+        self._vision = VisionProcessor(roi_height_pct=_get_float("ROI_HEIGHT_PCT", 0.6))
+        self._geometry = GeometryCalculator()
+        inner_thresh, outer_thresh = self._config.get_vp_thresholds()
+        danger_margin, danger_nudge = self._config.get_danger_margins()
+        self._steering = SteeringController(
+            pid_constants=self._robot_state.pid,
+            danger_margin=danger_margin,
+            nudge_deg=danger_nudge,
+            inner_thresh=inner_thresh,
+            outer_thresh=outer_thresh,
+        )
+        self._telemetry = TelemetryLogger(self._config)
+        self._target_hz = float(self._system_configs.get("MAIN_TARGET_HZ", 30.0))
+        self._camera_retry_limit = _get_int("MAIN_CAMERA_RETRY_LIMIT", 3)
+
+    def update(self, frame: np.ndarray, frame_num: int) -> float:
+        """Run one full frame pipeline and return the final steering angle."""
+        steering_angle = 90.0
+        frame_h, frame_w = frame.shape[:2]
+        vp: tuple[int, int] | None = None
+        vp_angle: float | None = None
+        left_intercept: int | None = None
+        right_intercept: int | None = None
+
+        lines = self._vision.process_frame(frame)
+        selected = self._vision._apply_geometric_filter(lines)
+        if selected is not None:
+            line1, line2 = selected
+            intercept_a, intercept_b = self._geometry.calculate_bottom_intercepts(
+                line1,
+                line2,
+                frame_h,
+            )
+            left_intercept, right_intercept = sorted((intercept_a, intercept_b))
+            vp = self._geometry.calculate_vanishing_point(line1, line2)
+            if vp is not None:
+                vp_angle = self._geometry.map_vp_to_angle(vp[0], frame_w)
+
+        steering_angle, fsm_state = self._steering.compute_steering(
+            vp_angle=vp_angle,
+            left_intercept=left_intercept,
+            right_intercept=right_intercept,
+            frame_width=frame_w,
+        )
+
+        telemetry_data: dict[str, Any] = {
+            "frame_num": frame_num,
+            "vp_x": None if vp is None else vp[0],
+            "vp_y": None if vp is None else vp[1],
+            "vp_angle": vp_angle,
+            "left_intercept": left_intercept,
+            "right_intercept": right_intercept,
+            "fsm_state": fsm_state,
+            "servo_angle": steering_angle,
+            "servo_center_angle": 90.0,
+        }
+        debug_data: dict[str, Any] = {
+            "show_detector_debug": bool(_get_bool("MAIN_SHOW_DETECTOR_DEBUG", False)),
+            "detector_debug": {
+                "lines_count": len(lines),
+                "selected_group_bbox": selected,
+            },
+        }
+
+        rendered = self._telemetry.update_visuals(frame, telemetry_data, debug_data)
+        self._telemetry.log_state(frame_num, telemetry_data)
+        self._telemetry.write_video(rendered)
+        self._telemetry.publish_stream(rendered, telemetry_data)
+        return float(steering_angle)
+
+    def _manage_loop_timing(self, loop_start_time: float) -> None:
+        """Use legacy sleep_remainder to maintain configured loop rate."""
+        if self._target_hz <= 0:
+            return
+        loop_period = 1.0 / self._target_hz
+        self._telemetry.sleep_remainder(loop_start_time, loop_period)
+
+    def run(self) -> None:
+        """Run the continuous capture-update loop until camera read fails."""
+        frame_num = 0
+        capture = None
+        try:
+            helpers = import_module("runtime.video_runtime_helpers")
+            init_camera_with_retries = getattr(helpers, "init_camera_with_retries")
+            capture = init_camera_with_retries(
+                int(self._system_configs.get("MAIN_CAMERA_INDEX", 0)),
+                self._camera_retry_limit,
+                self._logger,
+            )
+        except (ModuleNotFoundError, AttributeError):
+            capture = cv2.VideoCapture(int(self._system_configs.get("MAIN_CAMERA_INDEX", 0)))
+
+        try:
+            while capture is not None and capture.isOpened():
+                loop_start = time.perf_counter()
+                ok, frame = capture.read()
+                if not ok or frame is None:
+                    break
+
+                if bool(self._system_configs.get("MAIN_FLIP_FRAME", False)):
+                    frame = cv2.flip(frame, 1)
+
+                self.update(frame, frame_num)
+                frame_num += 1
+                self._manage_loop_timing(loop_start)
+        finally:
+            if capture is not None:
+                capture.release()
+            self._telemetry.close()
