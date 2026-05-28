@@ -1,47 +1,48 @@
 # Unified Calibration Components
 
-This module contains the first four core classes for the Unified Calibration architecture:
-
-- `ConfigManager`: Centralizes environment-backed runtime settings using the legacy `config.settings` helpers exactly as specified.
-- `VisionProcessor`: Implements Stage 1 frame processing (top ROI extraction, grayscale/blur/Canny/Hough) and provides `_apply_geometric_filter` to select opposing-slope lane candidates.
-- `GeometryCalculator`: Stateless math utilities for vanishing-point intersection, bottom intercepts, and VP-angle mapping.
-- `SteeringController`: Core 3-stage state machine for vision loss fallback, danger-zone overrides, and hysteresis-driven PD tracking.
+This module now provides the full unified runtime facade and integrates the utility APIs specified in `utilities_spec.md`.
 
 ## File Location
 
 - Module: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/unified_calibration_components.py`
 
-## Public Classes and Methods
+## Implemented Classes
 
-### `ConfigManager`
+- `ConfigManager`
+  - Loads runtime `.env` values via `config.settings` helper accessors.
+  - Exposes grouped getters: system/debug/video/stream configs + VP/danger thresholds.
 
-- `__init__(self) -> None`
-- `get_system_configs(self) -> dict`
-- `get_debug_configs(self) -> dict`
-- `get_video_configs(self) -> dict`
-- `get_stream_configs(self) -> dict`
-- `get_vp_thresholds(self) -> tuple[float, float]`
-- `get_danger_margins(self) -> tuple[int, float]`
+- `VisionProcessor`
+  - Top-ROI extraction and Canny/Hough line extraction.
+  - Geometric line pair selection with opposite slope filter.
 
-### `VisionProcessor`
+- `GeometryCalculator`
+  - Vanishing point intersection, bottom intercept projection, and VP-to-angle mapping.
 
-- `__init__(self, roi_height_pct: float) -> None`
-- `process_frame(self, frame: np.ndarray) -> list[tuple[int, int, int, int]]`
-- `_apply_geometric_filter(self, lines: list[tuple[int, int, int, int]]) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None`
+- `SteeringController`
+  - 3-stage steering state machine:
+    - `GAPPING`
+    - `DANGER_LEFT` / `DANGER_RIGHT`
+    - `TRACKING_COAST` / `TRACKING_PD`
 
-### `GeometryCalculator`
+- `TelemetryLogger`
+  - Bridges to `runtime.video_runtime_helpers` APIs for CSV, overlays, debug panel, video writer, and loop sleep.
+  - Bridges to `runtime.https_stream` for shared-frame publishing and HTTPS MJPEG serving.
+  - Writes a superset main CSV schema aligned to `utilities_spec.md`.
 
-- `calculate_vanishing_point(line1: tuple[int, int, int, int], line2: tuple[int, int, int, int]) -> tuple[int, int] | None`
-- `calculate_bottom_intercepts(line1: tuple[int, int, int, int], line2: tuple[int, int, int, int], frame_height: int) -> tuple[int, int]`
-- `map_vp_to_angle(vp_x: int, frame_width: int) -> float`
+- `UnifiedCalibrator`
+  - Main orchestrator for frame capture, processing, steering decision, visualization, telemetry, and loop timing.
+  - Integrates `vision.detector.LineDetector` debug output.
+  - Supports optional live preview window via `MAIN_SHOW_PREVIEW`.
 
-### `SteeringController`
+## Related Utility Modules
 
-- `__init__(self, pid_constants: PIDConstants, danger_margin: int, nudge_deg: float, inner_thresh: float, outer_thresh: float) -> None`
-- `compute_steering(self, vp_angle: float | None, left_intercept: int | None, right_intercept: int | None, frame_width: int) -> tuple[float, str]`
-- `_apply_pd(self, error: float) -> float`
+- Runtime helpers: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/runtime/video_runtime_helpers.py`
+- HTTPS stream: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/runtime/https_stream.py`
+- Detector API: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/vision/detector.py`
+- Robot state contracts: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/models/robot_state.py`
 
 ## Notes
 
-- The module currently implements configuration, Stage 1 vision extraction, stateless geometry math, and steering state-machine logic.
-- Telemetry and facade orchestration classes are intentionally left for subsequent implementation phases.
+- Runtime configuration should be read through `config.settings` helpers and exported constants.
+- The utility modules are intentionally reusable and can be imported independently by future entrypoints.
