@@ -42,7 +42,7 @@ def _get_bool(name: str, default: bool) -> bool:
 
 MAIN_TARGET_HZ = _get_float("MAIN_TARGET_HZ", 30.0)
 MAIN_CAMERA_INDEX = _get_int("MAIN_CAMERA_INDEX", 0)
-MAIN_CSV_LOG_FILE = _get_str("MAIN_CSV_LOG_FILE", "run_log.csv")
+MAIN_CSV_LOG_FILE = _get_str("MAIN_CSV_LOG_FILE", "run_logs.csv")
 MAIN_FLIP_FRAME = _get_bool("MAIN_FLIP_FRAME", False)
 MAIN_TERMINAL_LOG = _get_bool("MAIN_TERMINAL_LOG", True)
 MAIN_DEBUG_MODE = _get_bool("MAIN_DEBUG_MODE", False)

@@ -28,7 +28,7 @@ Well-known environment-backed constants (name -> default value):
 
 - MAIN_TARGET_HZ -> 30.0
 - MAIN_CAMERA_INDEX -> 0
-- MAIN_CSV_LOG_FILE -> "run_log.csv"
+- MAIN_CSV_LOG_FILE -> "run_logs.csv"
 - MAIN_FLIP_FRAME -> False
 - MAIN_TERMINAL_LOG -> True
 - MAIN_DEBUG_MODE -> False
