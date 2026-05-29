@@ -115,7 +115,7 @@ Expected result: smooth transitions between **GAPPING**, **DANGER_LEFT/RIGHT**, 
 
 ## Debug and Output
 
-- CSV logging: `MAIN_CSV_LOG_FILE`
+- CSV logging: `MAIN_CSV_LOG_FILE` (saved as `logs/<day_month_year>/<hour_minute>_<name>.csv`)
 - Debug video: `MAIN_WRITE_DEBUG_VIDEO`, `MAIN_DEBUG_VIDEO_OUTPUT`
 - HTTPS stream: enable `MAIN_HTTPS_STREAM_ENABLED` and configure `MAIN_HTTPS_*`
 

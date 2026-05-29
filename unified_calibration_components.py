@@ -24,6 +24,7 @@ class ConfigManager:
             "MAIN_TARGET_HZ": _get_float("MAIN_TARGET_HZ", 30.0),
             "MAIN_CAMERA_INDEX": _get_int("MAIN_CAMERA_INDEX", 0),
             "MAIN_FLIP_FRAME": _get_bool("MAIN_FLIP_FRAME", False),
+            "MAIN_TERMINAL_LOG": _get_bool("MAIN_TERMINAL_LOG", True),
         }
         self._debug_configs = {
             "MAIN_DEBUG_MODE": _get_bool("MAIN_DEBUG_MODE", False),
@@ -377,8 +378,10 @@ class TelemetryLogger:
         init_video_writer = getattr(helpers, "init_video_writer", None)
 
         if callable(init_csv_logger):
-            csv_path = _get_str("MAIN_CSV_LOG_FILE", "run_log.csv")
+            csv_path = _get_str("MAIN_CSV_LOG_FILE", "run_logs.csv")
             self._csv_writer, self._csv_file = init_csv_logger(csv_path, self._csv_fieldnames)
+            if self._csv_file is not None:
+                self._logger.info("Telemetry CSV logging to %s", self._csv_file.name)
 
         if callable(init_video_writer) and bool(
             self._video_configs.get("MAIN_WRITE_DEBUG_VIDEO", False)
@@ -574,6 +577,9 @@ class UnifiedCalibrator:
         )
         self._telemetry = TelemetryLogger(self._config)
         self._target_hz = float(self._system_configs.get("MAIN_TARGET_HZ", 30.0))
+        self._terminal_log_enabled = bool(self._system_configs.get("MAIN_TERMINAL_LOG", True))
+        self._terminal_log_interval_sec = 1.0
+        self._last_terminal_log_time = 0.0
         self._camera_retry_limit = _get_int("MAIN_CAMERA_RETRY_LIMIT", 3)
         self._stream_configs = self._config.get_stream_configs()
         self._stream_enabled = bool(self._stream_configs.get("MAIN_HTTPS_STREAM_ENABLED", False))
@@ -668,8 +674,27 @@ class UnifiedCalibrator:
         self._telemetry.log_state(frame_num, telemetry_data)
         self._telemetry.write_video(rendered)
         self._telemetry.publish_stream(rendered, telemetry_data)
+        self._log_terminal_status(frame_num, telemetry_data)
         self._robot_state.pid_last_error = pid_error
         return float(steering_angle)
+
+    def _log_terminal_status(self, frame_num: int, telemetry_data: dict[str, Any]) -> None:
+        """Emit periodic terminal status logs for live runtime visibility."""
+        if not self._terminal_log_enabled:
+            return
+        now = time.monotonic()
+        if now - self._last_terminal_log_time < self._terminal_log_interval_sec:
+            return
+        self._last_terminal_log_time = now
+        self._logger.info(
+            "frame=%s state=%s vp_angle=%s steering=%.2f loop_ms=%s overrun_ms=%s",
+            frame_num,
+            telemetry_data.get("fsm_state", ""),
+            telemetry_data.get("vp_angle", ""),
+            float(telemetry_data.get("servo_angle", 90.0)),
+            telemetry_data.get("loop_ms", ""),
+            telemetry_data.get("loop_overrun_ms", ""),
+        )
 
     def _manage_loop_timing(self, loop_start_time: float) -> None:
         """Use legacy sleep_remainder to maintain configured loop rate."""

@@ -15,10 +15,16 @@ import numpy as np
 
 
 def init_csv_logger(path: str, fieldnames: list[str]) -> tuple[csv.DictWriter, TextIO]:
-    """Open CSV append logger and ensure header exists."""
-    csv_path = Path(path)
-    if csv_path.parent and str(csv_path.parent) != ".":
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
+    """Open CSV append logger in day folder with timestamped filename."""
+    source = Path(path)
+    now = datetime.now()
+    day_folder = f"{now.day}_{now.month}_{now.year}"
+    timestamp = f"{now.hour}_{now.minute}"
+    stem = source.stem or "run_logs"
+    suffix = source.suffix or ".csv"
+    base_dir = source.parent if str(source.parent) != "." else Path("logs")
+    csv_path = base_dir / day_folder / f"{timestamp}_{stem}{suffix}"
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
     existed = csv_path.exists() and csv_path.stat().st_size > 0
     fileobj = csv_path.open("a", newline="", encoding="utf-8")
     writer = csv.DictWriter(fileobj, fieldnames=fieldnames)
@@ -137,7 +143,7 @@ def build_process_video_arg_parser(
 def build_main_arg_parser(
     default_camera_index: int = 0,
     default_target_hz: float = 30.0,
-    default_csv_log_file: str = "run_log.csv",
+    default_csv_log_file: str = "run_logs.csv",
 ) -> argparse.ArgumentParser:
     """Build parser used by main realtime entrypoint."""
     parser = argparse.ArgumentParser(description="Unified realtime calibration")
