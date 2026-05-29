@@ -33,7 +33,7 @@ This module now provides the full unified runtime facade and integrates the util
 - `UnifiedCalibrator`
   - Main orchestrator for frame capture, processing, steering decision, visualization, telemetry, and loop timing.
   - Integrates `vision.detector.LineDetector` debug output.
-  - Supports optional live preview window via `MAIN_SHOW_PREVIEW`.
+  - Supports debug visualizer mode selection via `MAIN_DEBUG_VISUALIZER` (`imshow`, `video`, or `both`) when `MAIN_DEBUG_MODE=true`.
 
 ## Related Utility Modules
 
