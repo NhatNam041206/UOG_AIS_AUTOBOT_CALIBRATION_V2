@@ -14,16 +14,27 @@ import cv2
 import numpy as np
 
 
-def init_csv_logger(path: str, fieldnames: list[str]) -> tuple[csv.DictWriter, TextIO]:
-    """Open CSV append logger in day folder with timestamped filename."""
+def init_csv_logger(
+    path: str,
+    fieldnames: list[str],
+    use_daily_layout: bool = True,
+) -> tuple[csv.DictWriter, TextIO]:
+    """Open CSV append logger with optional legacy daily/timestamp layout."""
     source = Path(path)
-    now = datetime.now()
-    day_folder = f"{now.day}_{now.month}_{now.year}"
-    timestamp = f"{now.hour}_{now.minute}"
-    stem = source.stem or "run_logs"
-    suffix = source.suffix or ".csv"
-    base_dir = source.parent if str(source.parent) != "." else Path("logs")
-    csv_path = base_dir / day_folder / f"{timestamp}_{stem}{suffix}"
+    if use_daily_layout:
+        now = datetime.now()
+        day_folder = f"{now.day}_{now.month}_{now.year}"
+        timestamp = f"{now.hour}_{now.minute}"
+        stem = source.stem or "run_logs"
+        suffix = source.suffix or ".csv"
+        base_dir = source.parent if str(source.parent) != "." else Path("logs")
+        csv_path = base_dir / day_folder / f"{timestamp}_{stem}{suffix}"
+    else:
+        suffix = source.suffix or ".csv"
+        file_name = source.name if source.name else f"run_logs{suffix}"
+        base_dir = source.parent if str(source.parent) != "." else Path("logs")
+        csv_path = base_dir / file_name
+
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     existed = csv_path.exists() and csv_path.stat().st_size > 0
     fileobj = csv_path.open("a", newline="", encoding="utf-8")

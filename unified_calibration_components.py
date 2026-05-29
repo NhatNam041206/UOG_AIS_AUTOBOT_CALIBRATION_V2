@@ -6,6 +6,7 @@ import logging
 import time
 from importlib import import_module
 from math import hypot
+from pathlib import Path
 from typing import Any, TextIO
 
 import cv2
@@ -370,10 +371,29 @@ class TelemetryLogger:
         self._video_writer: Any = None
         self._video_width = _get_int("MAIN_FRAME_WIDTH", 640)
         self._video_height = _get_int("MAIN_FRAME_HEIGHT", 480)
+        self._run_id = self._build_run_id()
+        self._run_day_folder = time.strftime("%d_%m_%Y")
+        self._run_dir = Path("logs") / self._run_day_folder / self._run_id
+        self._run_dir.mkdir(parents=True, exist_ok=True)
+        self._logger.info("Run artifacts will be stored in %s", self._run_dir)
         self._frame_store: Any = None
         self._stream_server: Any = None
         self._load_legacy_visual_and_logging_bridges()
         self._load_stream_bridge()
+
+    def _build_run_id(self) -> str:
+        """Generate a stable run identifier for grouping artifacts."""
+        timestamp = time.strftime("%H_%M_%S")
+        millis = int((time.time() % 1.0) * 1000.0)
+        return f"run_{timestamp}_{millis:03d}"
+
+    def _resolve_run_artifact_path(self, configured_path: str, fallback_name: str) -> str:
+        """Resolve output artifacts to the shared run directory for relative paths."""
+        src = Path(configured_path)
+        if src.is_absolute():
+            return str(src)
+        file_name = src.name or fallback_name
+        return str(self._run_dir / file_name)
 
     def _load_legacy_visual_and_logging_bridges(self) -> None:
         """Load legacy runtime.video_runtime_helpers APIs if available."""
@@ -390,7 +410,12 @@ class TelemetryLogger:
 
         if callable(init_csv_logger):
             csv_path = _get_str("MAIN_CSV_LOG_FILE", "run_logs.csv")
-            self._csv_writer, self._csv_file = init_csv_logger(csv_path, self._csv_fieldnames)
+            resolved_csv_path = self._resolve_run_artifact_path(csv_path, "run_logs.csv")
+            self._csv_writer, self._csv_file = init_csv_logger(
+                resolved_csv_path,
+                self._csv_fieldnames,
+                use_daily_layout=False,
+            )
             if self._csv_file is not None:
                 self._logger.info("Telemetry CSV logging to %s", self._csv_file.name)
 
@@ -400,13 +425,15 @@ class TelemetryLogger:
         )
         if callable(init_video_writer) and (legacy_video_enabled or visualizer_video_enabled):
             path = str(self._video_configs.get("MAIN_DEBUG_VIDEO_OUTPUT", "main_debug.mp4"))
+            resolved_video_path = self._resolve_run_artifact_path(path, "main_debug.mp4")
             fps = float(self._video_configs.get("MAIN_VIDEO_OUTPUT_FPS", 20.0))
             self._video_writer = init_video_writer(
-                path,
+                resolved_video_path,
                 fps,
                 self._video_width,
                 self._video_height,
             )
+            self._logger.info("Telemetry debug video logging to %s", resolved_video_path)
 
     def _load_stream_bridge(self) -> None:
         """Load and start legacy HTTPS stream transport when enabled."""
