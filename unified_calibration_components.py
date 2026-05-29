@@ -16,6 +16,12 @@ from models.robot_state import PIDConstants, RobotState
 from vision.detector import LineDetector
 
 
+def _normalize_debug_visualizer(value: Any) -> str:
+    """Normalize debug visualizer mode from environment/config input."""
+    mode = str(value).strip().lower()
+    return mode if mode in {"imshow", "video", "both"} else ""
+
+
 class ConfigManager:
     """Registry for runtime configuration values used by the unified module."""
 
@@ -28,6 +34,7 @@ class ConfigManager:
         }
         self._debug_configs = {
             "MAIN_DEBUG_MODE": _get_bool("MAIN_DEBUG_MODE", False),
+            "MAIN_DEBUG_VISUALIZER": _get_str("MAIN_DEBUG_VISUALIZER", ""),
             "MAIN_SHOW_PREVIEW": _get_bool("MAIN_SHOW_PREVIEW", False),
             "MAIN_SHOW_GUIDANCE_OVERLAY": _get_bool(
                 "MAIN_SHOW_GUIDANCE_OVERLAY",
@@ -310,6 +317,10 @@ class TelemetryLogger:
         self._inner_thresh, self._outer_thresh = config.get_vp_thresholds()
         self._debug_configs = config.get_debug_configs()
         self._video_configs = config.get_video_configs()
+        self._debug_mode_enabled = bool(self._debug_configs.get("MAIN_DEBUG_MODE", False))
+        self._debug_visualizer = _normalize_debug_visualizer(
+            self._debug_configs.get("MAIN_DEBUG_VISUALIZER", ""),
+        )
         self._stream_configs = config.get_stream_configs()
         self._stream_enabled = bool(self._stream_configs.get("MAIN_HTTPS_STREAM_ENABLED", False))
         self._csv_fieldnames = [
@@ -383,9 +394,11 @@ class TelemetryLogger:
             if self._csv_file is not None:
                 self._logger.info("Telemetry CSV logging to %s", self._csv_file.name)
 
-        if callable(init_video_writer) and bool(
-            self._video_configs.get("MAIN_WRITE_DEBUG_VIDEO", False)
-        ):
+        legacy_video_enabled = bool(self._video_configs.get("MAIN_WRITE_DEBUG_VIDEO", False))
+        visualizer_video_enabled = self._debug_mode_enabled and (
+            self._debug_visualizer in {"video", "both"}
+        )
+        if callable(init_video_writer) and (legacy_video_enabled or visualizer_video_enabled):
             path = str(self._video_configs.get("MAIN_DEBUG_VIDEO_OUTPUT", "main_debug.mp4"))
             fps = float(self._video_configs.get("MAIN_VIDEO_OUTPUT_FPS", 20.0))
             self._video_writer = init_video_writer(
@@ -561,6 +574,11 @@ class UnifiedCalibrator:
         self._config = config or ConfigManager()
         self._system_configs = self._config.get_system_configs()
         self._debug_configs = self._config.get_debug_configs()
+        self._debug_mode_enabled = bool(self._debug_configs.get("MAIN_DEBUG_MODE", False))
+        self._debug_visualizer = _normalize_debug_visualizer(
+            self._debug_configs.get("MAIN_DEBUG_VISUALIZER", ""),
+        )
+        self._preview_enabled = self._resolve_preview_enabled()
 
         self._robot_state = RobotState()
         self._vision = VisionProcessor(roi_height_pct=_get_float("ROI_HEIGHT_PCT", 0.6))
@@ -703,6 +721,12 @@ class UnifiedCalibrator:
         loop_period = 1.0 / self._target_hz
         self._telemetry.sleep_remainder(loop_start_time, loop_period)
 
+    def _resolve_preview_enabled(self) -> bool:
+        """Determine if OpenCV preview window should be shown."""
+        if self._debug_mode_enabled and self._debug_visualizer:
+            return self._debug_visualizer in {"imshow", "both"}
+        return bool(self._debug_configs.get("MAIN_SHOW_PREVIEW", False))
+
     def run(self) -> None:
         """Run the continuous capture-update loop until camera read fails."""
         frame_num = 0
@@ -729,7 +753,7 @@ class UnifiedCalibrator:
                     frame = cv2.flip(frame, 1)
 
                 self.update(frame, frame_num)
-                if bool(self._debug_configs.get("MAIN_SHOW_PREVIEW", False)):
+                if self._preview_enabled:
                     preview = self._last_rendered_frame if self._last_rendered_frame is not None else frame
                     cv2.imshow("Unified Calibration Preview", preview)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -739,6 +763,6 @@ class UnifiedCalibrator:
         finally:
             if capture is not None:
                 capture.release()
-            if bool(self._debug_configs.get("MAIN_SHOW_PREVIEW", False)):
+            if self._preview_enabled:
                 cv2.destroyAllWindows()
             self._telemetry.close()

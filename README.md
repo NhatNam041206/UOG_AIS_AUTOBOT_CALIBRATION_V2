@@ -116,7 +116,9 @@ Expected result: smooth transitions between **GAPPING**, **DANGER_LEFT/RIGHT**, 
 ## Debug and Output
 
 - CSV logging: `MAIN_CSV_LOG_FILE` (saved as `logs/<day_month_year>/<hour_minute>_<name>.csv`)
-- Debug video: `MAIN_WRITE_DEBUG_VIDEO`, `MAIN_DEBUG_VIDEO_OUTPUT`
+- Debug visualizer (when `MAIN_DEBUG_MODE=true`): `MAIN_DEBUG_VISUALIZER=imshow|video|both`
+- Debug video output path/fps: `MAIN_DEBUG_VIDEO_OUTPUT`, `MAIN_VIDEO_OUTPUT_FPS`
+- Legacy toggles remain available: `MAIN_SHOW_PREVIEW`, `MAIN_WRITE_DEBUG_VIDEO`
 - HTTPS stream: enable `MAIN_HTTPS_STREAM_ENABLED` and configure `MAIN_HTTPS_*`
 
 For first deployment, keep streaming and video writing disabled until core tracking is stable.
