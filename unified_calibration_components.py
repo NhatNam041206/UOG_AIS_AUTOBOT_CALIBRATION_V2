@@ -793,3 +793,7 @@ class UnifiedCalibrator:
             if self._preview_enabled:
                 cv2.destroyAllWindows()
             self._telemetry.close()
+
+    def close(self) -> None:
+        """Release telemetry and video resources without running the loop."""
+        self._telemetry.close()

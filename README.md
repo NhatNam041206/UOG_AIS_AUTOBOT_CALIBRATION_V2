@@ -44,6 +44,16 @@ python main.py
 
 Press `Ctrl+C` for graceful shutdown.
 
+### Offline video processing
+
+Use this entrypoint when you want to process a video file instead of a live camera:
+
+```bash
+python process_video.py --input path/to/input.mp4 --output ./videos/5.mp4 --csv-output video_log.csv
+```
+
+It processes the full input video frame-by-frame and saves the rendered MP4 and CSV into the run folder under `logs/<day_month_year>/<run_id>/`.
+
 ---
 
 ## Tuning Guide (Practical)
