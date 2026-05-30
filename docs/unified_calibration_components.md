@@ -4,7 +4,7 @@ This module now provides the full unified runtime facade and integrates the util
 
 ## File Location
 
-- Module: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/unified_calibration_components.py`
+- Module: `unified_calibration_components.py`
 
 ## Implemented Classes
 
@@ -26,21 +26,22 @@ This module now provides the full unified runtime facade and integrates the util
     - `TRACKING_COAST` / `TRACKING_PD`
 
 - `TelemetryLogger`
-  - Bridges to `runtime.video_runtime_helpers` APIs for CSV, overlays, debug panel, video writer, and loop sleep.
+  - Bridges to `overlay_drawer.OverlayDrawer` for the main HUD.
+  - Bridges to `runtime.video_runtime_helpers` APIs for CSV, legacy overlay fallback, debug panel, video writer, and loop sleep.
   - Bridges to `runtime.https_stream` for shared-frame publishing and HTTPS MJPEG serving.
   - Writes a superset main CSV schema aligned to `utilities_spec.md`.
 
 - `UnifiedCalibrator`
   - Main orchestrator for frame capture, processing, steering decision, visualization, telemetry, and loop timing.
-  - Integrates `vision.detector.LineDetector` debug output.
+  - Integrates `vision.detector.LineDetector` debug output, including the selected lane pair exposed for the HUD.
   - Supports debug visualizer mode selection via `MAIN_DEBUG_VISUALIZER` (`imshow`, `video`, or `both`) when `MAIN_DEBUG_MODE=true`.
 
 ## Related Utility Modules
 
-- Runtime helpers: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/runtime/video_runtime_helpers.py`
-- HTTPS stream: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/runtime/https_stream.py`
-- Detector API: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/vision/detector.py`
-- Robot state contracts: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/models/robot_state.py`
+- Runtime helpers: `runtime/video_runtime_helpers.py`
+- HTTPS stream: `runtime/https_stream.py`
+- Detector API: `vision/detector.py`
+- Robot state contracts: `models/robot_state.py`
 
 ## Notes
 

@@ -1,6 +1,6 @@
 # Runtime Video Helpers API
 
-Module: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/runtime/video_runtime_helpers.py`
+Module: `runtime/video_runtime_helpers.py`
 
 ## Logging / CSV
 
@@ -27,3 +27,8 @@ Module: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/runtime/vid
 - `maybe_flip_frame(frame: np.ndarray, flip_frame: bool) -> np.ndarray`
 - `draw_overlay(...) -> np.ndarray`
 - `build_detector_debug_panel(frame_width: int, panel_height: int, detector_debug: dict[str, Any]) -> np.ndarray`
+
+## Notes
+
+- `draw_overlay(...)` is the legacy guidance overlay helper and remains available as a fallback.
+- The newer offline HUD path lives in `overlay_drawer.OverlayDrawer` and is used by `TelemetryLogger.update_visuals(...)`.

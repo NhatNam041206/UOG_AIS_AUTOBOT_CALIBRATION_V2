@@ -1,6 +1,6 @@
 # Vision Detector API
 
-Module: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/vision/detector.py`
+Module: `vision/detector.py`
 
 ## Public API
 
@@ -18,4 +18,7 @@ Module: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/vision/dete
 
 - `gray`, `roi`, `preprocessed`, `edges`, `hough_vis`, `grouped_vis`
 - `lines_count`, `groups_count`, `reference_group_index`, `selected_group_bbox`
+- `selected_lines`
 - `theta_horizontal`, `theta_candidate`, `horizontal_ok`, `sanity_ok`, `theta_output`, `stale_output`
+
+`selected_lines` contains the opposing lane-line pair selected by `LineDetector` and is used by the HUD overlay.

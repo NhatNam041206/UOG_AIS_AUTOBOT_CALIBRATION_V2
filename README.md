@@ -9,6 +9,7 @@ Unified Calibration is a single runtime module that detects lane geometry, compu
 - Computes vanishing point + bottom intercepts.
 - Applies a 3-stage steering governor with safety-first behavior.
 - Logs telemetry, renders overlays, and can publish HTTPS MJPEG frames.
+- Uses a dedicated HUD drawer for telemetry, danger zones, lane coloring, and the angle gauge.
 
 ## 3-Stage Vanishing Point Logic
 
@@ -53,6 +54,7 @@ python process_video.py --input path/to/input.mp4 --output ./videos/5.mp4 --csv-
 ```
 
 It processes the full input video frame-by-frame and saves the rendered MP4 and CSV into the run folder under `logs/<day_month_year>/<run_id>/`.
+The offline MP4 now includes the same HUD used by the runtime pipeline: telemetry panel, danger zones, dashed center guide, lane-line coloring, vanishing-point crosshair, and the bottom hysteresis gauge.
 
 ---
 
@@ -129,6 +131,7 @@ Expected result: smooth transitions between **GAPPING**, **DANGER_LEFT/RIGHT**, 
 - Debug visualizer (when `MAIN_DEBUG_MODE=true`): `MAIN_DEBUG_VISUALIZER=imshow|video|both`
 - Debug video output path/fps: `MAIN_DEBUG_VIDEO_OUTPUT`, `MAIN_VIDEO_OUTPUT_FPS`
 - Legacy toggles remain available: `MAIN_SHOW_PREVIEW`, `MAIN_WRITE_DEBUG_VIDEO`
+- Detector debug output now exposes `selected_lines` for the line pair chosen by the detector.
 - HTTPS stream: enable `MAIN_HTTPS_STREAM_ENABLED` and configure `MAIN_HTTPS_*`
 
 For first deployment, keep streaming and video writing disabled until core tracking is stable.
@@ -139,7 +142,8 @@ For first deployment, keep streaming and video writing disabled until core track
 
 The codebase now includes implementation docs for the reusable utility API surface:
 
-- `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/docs/unified_calibration_components.md`
-- `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/docs/runtime_video_runtime_helpers.md`
-- `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/docs/runtime_https_stream.md`
-- `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/docs/vision_detector.md`
+- `docs/unified_calibration_components.md`
+- `docs/unified_calibration_components.md`
+- `docs/runtime_video_runtime_helpers.md`
+- `docs/runtime_https_stream.md`
+- `docs/vision_detector.md`

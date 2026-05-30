@@ -20,7 +20,7 @@ Data moves through the new architecture in a strict, Single-Input, Single-Output
 2. **Stage 1 (Initialization):** The `VisionProcessor` crops the top half of the frame (ROI), runs Canny/HoughP, and applies a Geometric Filter to isolate the two optimal lane lines (opposing slopes).
 3. **Stage 3 Safety Check (Danger Zone):** The `GeometryCalculator` computes the bottom $x$-intercepts of the detected lines. The `SteeringController` checks these against `DANGER_MARGIN_PX`. If a boundary is crossed, a fixed safety nudge is output, bypassing Stage 2.
 4. **Stage 2 Tracking (Normal Ops):** If the robot is safely inside the margins, the `GeometryCalculator` calculates the Vanishing Point ($x_{vp}, y_{vp}$). The `SteeringController` converts this to $\theta_{raw}$, applies the Hysteresis bounds (`VP_INNER_THRESH` / `VP_OUTER_THRESH`), and outputs a smoothed PD angle.
-5. **Output & Telemetry:** The final computed servo angle is sent to the hardware API. Simultaneously, the `TelemetryLogger` renders the new mathematical markers onto the frame, records the metrics to the CSV, conditionally writes to the local debug MP4, and pushes the frame to the `SharedFrameStore`.
+5. **Output & Telemetry:** The final computed servo angle is sent to the hardware API. Simultaneously, the `TelemetryLogger` renders the HUD through `OverlayDrawer`, records the metrics to the CSV, conditionally writes to the local debug MP4, and pushes the frame to the `SharedFrameStore`.
 
 ---
 
@@ -93,12 +93,13 @@ Data moves through the new architecture in a strict, Single-Input, Single-Output
 * **Core Method Signatures:**
 * `__init__(self, config: ConfigManager) -> None`
 * `log_state(self, frame_num: int, telemetry_data: dict) -> None`
-* `update_visuals(self, frame: np.ndarray, telemetry_data: dict, debug_data: dict) -> np.ndarray` (Renders the new geometry: draws circles at the Vanishing Point $x_{vp}, y_{vp}$ and bottom intercepts, and draws vertical warning lines at the `DANGER_MARGIN_PX` limits, before passing to `draw_overlay`).
+* `update_visuals(self, frame: np.ndarray, telemetry_data: dict, debug_data: dict) -> np.ndarray` (Renders the HUD via `OverlayDrawer`, including telemetry, danger zones, lane-line coloring, vanishing-point marker, and the hysteresis gauge; falls back to the legacy overlay helper if needed).
 * `publish_stream(self, frame: np.ndarray, telemetry_data: dict) -> None` (Pushes to `SharedFrameStore` if `MAIN_HTTPS_STREAM_ENABLED` is true).
 
 
 * **Integration Points:**
 * `runtime.video_runtime_helpers.init_csv_logger`
+* `overlay_drawer.OverlayDrawer`
 * `runtime.video_runtime_helpers.draw_overlay`
 * `runtime.video_runtime_helpers.build_detector_debug_panel`
 * `runtime.video_runtime_helpers.init_video_writer`
@@ -120,8 +121,20 @@ Data moves through the new architecture in a strict, Single-Input, Single-Output
 * **Integration Points:**
 * Calls `runtime.video_runtime_helpers.sleep_remainder` using `MAIN_TARGET_HZ` to ensure consistent loop execution.
 
+---
 
+## 5. Offline Video Path
 
+`process_video.py` now drives the same frame-processing pipeline as the live loop and writes the annotated frame to the debug MP4 output.
+
+Key behavior:
+
+* The CLI configures the shared runtime for offline processing and debug video output.
+* `UnifiedCalibrator.update(...)` stores the rendered frame after telemetry overlay generation.
+* The saved MP4 includes the telemetry panel, danger zones, dashed center line, lane coloring, vanishing-point crosshair, and the angle gauge.
+* The CSV output remains aligned with the main telemetry schema.
+
+---
 ---
 
 ## 4. State Machine Blueprint

@@ -1,6 +1,6 @@
 # HTTPS MJPEG Stream API
 
-Module: `/tmp/workspace/NhatNam041206/UOG_AIS_AUTOBOT_CALIBRATION_V2/runtime/https_stream.py`
+Module: `runtime/https_stream.py`
 
 ## Shared Frame Store
 

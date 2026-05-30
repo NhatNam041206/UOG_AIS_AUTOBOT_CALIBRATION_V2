@@ -182,6 +182,7 @@ Contract for `detector_debug` dict (as produced by `vision.detector.LineDetector
   - "groups_count": int
   - "reference_group_index": int | None
   - "selected_group_bbox": tuple[int,int,int,int] | None
+  - "selected_lines": list[tuple[int,int,int,int]] | None
   - "theta_horizontal": float | None
   - "theta_candidate": float | None
   - "horizontal_ok": bool
@@ -189,6 +190,8 @@ Contract for `detector_debug` dict (as produced by `vision.detector.LineDetector
   - "theta_output": float | None
   - "stale_output": bool
   - Additional numeric tunables mirrored from `config.settings` may also be present.
+
+Notes: `selected_lines` is the opposing lane-line pair selected by `vision.detector.LineDetector` and is used by the new HUD overlay.
 
 ---
 
