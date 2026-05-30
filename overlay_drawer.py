@@ -54,7 +54,7 @@ class OverlayDrawer:
         right_intercept_x = self._as_int_or_none(debug_packet.get("right_intercept_x"))
         final_cmd = self._as_float(debug_packet.get("final_steering_cmd"), self.angle_center)
         vp_coord = self._as_point(debug_packet.get("vp_coord"), (frame_w // 2, frame_h // 3))
-        lines = self._normalize_lines(debug_packet.get("lines", []))
+        lines = self._normalize_lines(debug_packet.get("lines") or [])
 
         self._draw_floor_visuals(
             output,

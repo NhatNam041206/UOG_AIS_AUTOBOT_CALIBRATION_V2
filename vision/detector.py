@@ -122,6 +122,7 @@ class LineDetector:
             "grouped_vis": grouped_vis,
             "lines_count": len(lines),
             "groups_count": 2 if selected is not None else 0,
+            "selected_lines": None if selected is None else [tuple(map(int, selected[0])), tuple(map(int, selected[1]))],
             "reference_group_index": reference_group_index,
             "selected_group_bbox": selected_group_bbox,
             "theta_horizontal": theta_horizontal,

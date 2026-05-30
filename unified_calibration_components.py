@@ -14,6 +14,7 @@ import numpy as np
 
 from config.settings import _get_bool, _get_float, _get_int, _get_str
 from models.robot_state import PIDConstants, RobotState
+from overlay_drawer import OverlayDrawer
 from vision.detector import LineDetector
 
 
@@ -366,6 +367,11 @@ class TelemetryLogger:
         self._draw_overlay_fn: Any = None
         self._build_detector_debug_panel_fn: Any = None
         self._sleep_remainder_fn: Any = None
+        self._overlay_drawer = OverlayDrawer(
+            inner_thresh=self._inner_thresh,
+            outer_thresh=self._outer_thresh,
+            danger_margin_px=self._danger_margin_px,
+        )
         self._csv_writer: Any = None
         self._csv_file: TextIO | None = None
         self._video_writer: Any = None
@@ -496,46 +502,63 @@ class TelemetryLogger:
         telemetry_data: dict[str, Any],
         debug_data: dict[str, Any],
     ) -> np.ndarray:
-        """Draw new geometry then defer to legacy draw_overlay for final rendering."""
+        """Draw the HUD and optional detector debug panel."""
         output = frame.copy()
         frame_h, frame_w = output.shape[:2]
 
-        vp_x = telemetry_data.get("vp_x")
-        vp_y = telemetry_data.get("vp_y")
-        if vp_x is not None and vp_y is not None:
-            cv2.circle(output, (int(vp_x), int(vp_y)), 6, (0, 255, 255), -1)
-
-        left_intercept = telemetry_data.get("left_intercept")
-        right_intercept = telemetry_data.get("right_intercept")
-        bottom_y = max(0, frame_h - 1)
-        if left_intercept is not None:
-            cv2.circle(output, (int(left_intercept), bottom_y), 6, (255, 255, 0), -1)
-        if right_intercept is not None:
-            cv2.circle(output, (int(right_intercept), bottom_y), 6, (255, 255, 0), -1)
-
-        margin = max(0, min(self._danger_margin_px, frame_w))
-        cv2.line(output, (margin, 0), (margin, frame_h - 1), (0, 0, 255), 2)
-        cv2.line(
-            output,
-            (max(0, frame_w - margin), 0),
-            (max(0, frame_w - margin), frame_h - 1),
-            (0, 0, 255),
-            2,
-        )
-
-        if callable(self._draw_overlay_fn):
-            output = self._draw_overlay_fn(
+        if self._overlay_drawer is not None:
+            output = self._overlay_drawer.draw(
                 output,
-                int(telemetry_data.get("frame_num", 0)),
-                telemetry_data.get("vp_angle"),
-                telemetry_data.get("vp_angle"),
-                float(telemetry_data.get("servo_angle", 90.0)),
-                float(telemetry_data.get("servo_center_angle", 90.0)),
-                str(telemetry_data.get("fsm_state", "GAPPING")),
-                bool(self._debug_configs.get("MAIN_SHOW_GUIDANCE_OVERLAY", True)),
-                self._outer_thresh,
-                self._inner_thresh,
+                {
+                    "state": str(telemetry_data.get("fsm_state", "VISION_LOST")),
+                    "raw_vp_angle": telemetry_data.get("vp_angle"),
+                    "left_intercept_x": telemetry_data.get("left_intercept"),
+                    "right_intercept_x": telemetry_data.get("right_intercept"),
+                    "final_steering_cmd": telemetry_data.get("servo_angle", 90.0),
+                    "lines": debug_data.get("detector_debug", {}).get("selected_lines", []),
+                    "vp_coord": (
+                        int(telemetry_data.get("vp_x")) if telemetry_data.get("vp_x") is not None else frame_w // 2,
+                        int(telemetry_data.get("vp_y")) if telemetry_data.get("vp_y") is not None else frame_h // 3,
+                    ),
+                },
             )
+        else:
+            vp_x = telemetry_data.get("vp_x")
+            vp_y = telemetry_data.get("vp_y")
+            if vp_x is not None and vp_y is not None:
+                cv2.circle(output, (int(vp_x), int(vp_y)), 6, (0, 255, 255), -1)
+
+            left_intercept = telemetry_data.get("left_intercept")
+            right_intercept = telemetry_data.get("right_intercept")
+            bottom_y = max(0, frame_h - 1)
+            if left_intercept is not None:
+                cv2.circle(output, (int(left_intercept), bottom_y), 6, (255, 255, 0), -1)
+            if right_intercept is not None:
+                cv2.circle(output, (int(right_intercept), bottom_y), 6, (255, 255, 0), -1)
+
+            margin = max(0, min(self._danger_margin_px, frame_w))
+            cv2.line(output, (margin, 0), (margin, frame_h - 1), (0, 0, 255), 2)
+            cv2.line(
+                output,
+                (max(0, frame_w - margin), 0),
+                (max(0, frame_w - margin), frame_h - 1),
+                (0, 0, 255),
+                2,
+            )
+
+            if callable(self._draw_overlay_fn):
+                output = self._draw_overlay_fn(
+                    output,
+                    int(telemetry_data.get("frame_num", 0)),
+                    telemetry_data.get("vp_angle"),
+                    telemetry_data.get("vp_angle"),
+                    float(telemetry_data.get("servo_angle", 90.0)),
+                    float(telemetry_data.get("servo_center_angle", 90.0)),
+                    str(telemetry_data.get("fsm_state", "GAPPING")),
+                    bool(self._debug_configs.get("MAIN_SHOW_GUIDANCE_OVERLAY", True)),
+                    self._outer_thresh,
+                    self._inner_thresh,
+                )
 
         detector_debug = debug_data.get("detector_debug")
         show_panel = bool(debug_data.get("show_detector_debug", False))
@@ -629,6 +652,11 @@ class UnifiedCalibrator:
         self._stream_configs = self._config.get_stream_configs()
         self._stream_enabled = bool(self._stream_configs.get("MAIN_HTTPS_STREAM_ENABLED", False))
         self._last_rendered_frame: np.ndarray | None = None
+        self._overlay_drawer = OverlayDrawer(
+            inner_thresh=inner_thresh,
+            outer_thresh=outer_thresh,
+            danger_margin_px=danger_margin,
+        )
 
     def update(self, frame: np.ndarray, frame_num: int) -> float:
         """Run one full frame pipeline and return the final steering angle."""
